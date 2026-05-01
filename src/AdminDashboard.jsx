@@ -3,9 +3,16 @@ import { useNavigate } from "react-router-dom";
 
 const API_BASE = "http://localhost:5000/api";
 
-const EMPTY_FORM = { question: "", answer: "", category: "" };
+const EMPTY_FORM = {
+  question: "",
+  answer: "",
+  category: "",
+};
 
 export default function AdminDashboard() {
+  const navigate = useNavigate();
+  const modalRef = useRef(null);
+
   const [faqs, setFaqs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -15,26 +22,44 @@ export default function AdminDashboard() {
 
   const [modal, setModal] = useState(null);
   const [activeId, setActiveId] = useState(null);
-  const [form, setForm] = useState(EMPTY_FORM);
 
+  const [form, setForm] = useState(EMPTY_FORM);
   const [search, setSearch] = useState("");
 
   const token = localStorage.getItem("token");
-  const modalRef = useRef(null);
-  const navigate = useNavigate();
 
-  // ✅ Auth guard
+  // Logout
+  const logout = () => {
+    localStorage.removeItem("token");
+    navigate("/login");
+  };
+
+  // Auth Guard
   useEffect(() => {
-    if (!token) navigate("/login");
+    if (!token) {
+      navigate("/login");
+    }
   }, [token, navigate]);
 
-  // ✅ Fetch FAQs
+  // Toast
+  const showToast = (msg, type = "success") => {
+    setToast({ msg, type });
+
+    setTimeout(() => {
+      setToast(null);
+    }, 3000);
+  };
+
+  // Fetch FAQs
   const fetchFAQs = async () => {
     setLoading(true);
     setError("");
+
     try {
       const res = await fetch(`${API_BASE}/admin/faqs`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
       });
 
       if (res.status === 401) {
@@ -45,39 +70,30 @@ export default function AdminDashboard() {
       const data = await res.json();
       setFaqs(Array.isArray(data) ? data : []);
     } catch {
-      setError("Failed to load FAQs. Check your connection.");
+      setError("Failed to load FAQs.");
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchFAQs();
-  }, []);
+    if (token) {
+      fetchFAQs();
+    }
+  }, [token]);
 
-  // ✅ Filter
-  const filtered = faqs.filter((f) => {
+  // Search Filter
+  const filtered = faqs.filter((faq) => {
     const q = search.toLowerCase();
+
     return (
       !q ||
-      f.question.toLowerCase().includes(q) ||
-      f.answer.toLowerCase().includes(q)
+      faq.question.toLowerCase().includes(q) ||
+      faq.answer.toLowerCase().includes(q)
     );
   });
 
-  // ✅ Toast
-  const showToast = (msg, type = "success") => {
-    setToast({ msg, type });
-    setTimeout(() => setToast(null), 3000);
-  };
-
-  // ✅ Logout (navigate FIX)
-  const logout = () => {
-    localStorage.removeItem("token");
-    navigate("/login");
-  };
-
-  // ✅ CRUD
+  // Modal Helpers
   const openAdd = () => {
     setForm(EMPTY_FORM);
     setActiveId(null);
@@ -90,6 +106,7 @@ export default function AdminDashboard() {
       answer: faq.answer,
       category: faq.category || "",
     });
+
     setActiveId(faq._id);
     setModal("edit");
   };
@@ -97,6 +114,82 @@ export default function AdminDashboard() {
   const openDelete = (faq) => {
     setActiveId(faq._id);
     setModal("delete");
+  };
+
+  const closeModal = () => {
+    setModal(null);
+    setForm(EMPTY_FORM);
+    setActiveId(null);
+  };
+
+  const handleBackdrop = (e) => {
+    if (e.target === modalRef.current) {
+      closeModal();
+    }
+  };
+
+  // Save FAQ
+  const handleSave = async () => {
+    if (!form.question.trim() || !form.answer.trim()) {
+      showToast("Question and answer required.", "error");
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      const isEdit = modal === "edit";
+
+      const url = isEdit
+        ? `${API_BASE}/admin/faqs/${activeId}`
+        : `${API_BASE}/admin/faqs`;
+
+      const res = await fetch(url, {
+        method: isEdit ? "PUT" : "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(form),
+      });
+
+      if (!res.ok) throw new Error();
+
+      showToast(isEdit ? "FAQ updated." : "FAQ added.");
+      closeModal();
+      fetchFAQs();
+    } catch {
+      showToast("Could not save FAQ.", "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Delete FAQ
+  const handleDelete = async () => {
+    setDeletingId(activeId);
+
+    try {
+      const res = await fetch(
+        `${API_BASE}/admin/faqs/${activeId}`,
+        {
+          method: "DELETE",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      if (!res.ok) throw new Error();
+
+      showToast("FAQ deleted.");
+      closeModal();
+      fetchFAQs();
+    } catch {
+      showToast("Delete failed.", "error");
+    } finally {
+      setDeletingId(null);
+    }
   };
   return (
     <>
@@ -759,14 +852,9 @@ export default function AdminDashboard() {
         }
       `}</style>
 
-       <div className="ad-wrap">
+      <div className="ad-wrap">
         <header className="ad-header">
           <div className="ad-logo">
-            <div className="ad-logo-icon">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="white">
-                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z" />
-              </svg>
-            </div>
             <span className="ad-logo-text">
               College <em>Chatbot</em>
             </span>
@@ -774,7 +862,11 @@ export default function AdminDashboard() {
 
           <div className="ad-header-right">
             <span className="ad-badge">Admin Panel</span>
-            <button className="ad-logout" onClick={logout}>
+
+            <button
+              className="ad-logout"
+              onClick={logout}
+            >
               Logout
             </button>
           </div>
@@ -785,20 +877,32 @@ export default function AdminDashboard() {
             <h1>
               FAQ <em>Manager</em>
             </h1>
+
             <p>
-              Add, edit, or remove questions from the chatbot's knowledge base.
+              Add, edit, or remove questions from chatbot knowledge base.
             </p>
           </div>
 
           {!loading && !error && (
             <div className="ad-stats">
               <div className="ad-stat">
-                <div className="ad-stat-num">{faqs.length}</div>
-                <div className="ad-stat-label">Total FAQs</div>
+                <div className="ad-stat-num">
+                  {faqs.length}
+                </div>
+
+                <div className="ad-stat-label">
+                  Total FAQs
+                </div>
               </div>
+
               <div className="ad-stat">
-                <div className="ad-stat-num">{filtered.length}</div>
-                <div className="ad-stat-label">Showing</div>
+                <div className="ad-stat-num">
+                  {filtered.length}
+                </div>
+
+                <div className="ad-stat-label">
+                  Showing
+                </div>
               </div>
             </div>
           )}
@@ -806,18 +910,27 @@ export default function AdminDashboard() {
           {error && (
             <div className="ad-error-bar">
               {error}
-              <button onClick={fetchFAQs}>Retry</button>
+
+              <button onClick={fetchFAQs}>
+                Retry
+              </button>
             </div>
           )}
 
           <div className="ad-toolbar">
             <input
               className="ad-search"
-              placeholder="Search questions or answers…"
+              placeholder="Search FAQs..."
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) =>
+                setSearch(e.target.value)
+              }
             />
-            <button className="ad-add-btn" onClick={openAdd}>
+
+            <button
+              className="ad-add-btn"
+              onClick={openAdd}
+            >
               + Add FAQ
             </button>
           </div>
@@ -826,28 +939,40 @@ export default function AdminDashboard() {
             <div>Loading...</div>
           ) : filtered.length === 0 ? (
             <div className="ad-empty">
-              <p>{search ? "No FAQs match your search." : "No FAQs yet."}</p>
+              No FAQs found.
             </div>
           ) : (
             <div className="ad-list">
               {filtered.map((faq) => (
-                <div className="ad-faq-card" key={faq._id}>
+                <div
+                  className="ad-faq-card"
+                  key={faq._id}
+                >
                   <div className="ad-faq-body">
-                    <div className="ad-faq-q">{faq.question}</div>
-                    <div className="ad-faq-a">{faq.answer}</div>
+                    <div className="ad-faq-q">
+                      {faq.question}
+                    </div>
+
+                    <div className="ad-faq-a">
+                      {faq.answer}
+                    </div>
                   </div>
 
                   <div className="ad-faq-actions">
                     <button
                       className="ad-btn-edit"
-                      onClick={() => openEdit(faq)}
+                      onClick={() =>
+                        openEdit(faq)
+                      }
                     >
                       Edit
                     </button>
 
                     <button
                       className="ad-btn-del"
-                      onClick={() => openDelete(faq)}
+                      onClick={() =>
+                        openDelete(faq)
+                      }
                     >
                       Delete
                     </button>
@@ -859,7 +984,121 @@ export default function AdminDashboard() {
         </main>
       </div>
 
-      {toast && <div className={`ad-toast ${toast.type}`}>{toast.msg}</div>}
+      {/* MODAL */}
+      {modal && (
+        <div
+          className="ad-backdrop"
+          ref={modalRef}
+          onClick={handleBackdrop}
+        >
+          <div className="ad-modal">
+            {modal !== "delete" ? (
+              <>
+                <h2>
+                  {modal === "edit"
+                    ? "Edit FAQ"
+                    : "Add FAQ"}
+                </h2>
+
+                <input
+                  className="ad-minput"
+                  placeholder="Question"
+                  value={form.question}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      question:
+                        e.target.value,
+                    })
+                  }
+                />
+
+                <textarea
+                  className="ad-mtextarea"
+                  placeholder="Answer"
+                  value={form.answer}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      answer:
+                        e.target.value,
+                    })
+                  }
+                />
+
+                <input
+                  className="ad-minput"
+                  placeholder="Category"
+                  value={form.category}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      category:
+                        e.target.value,
+                    })
+                  }
+                />
+
+                <div className="ad-modal-footer">
+                  <button
+                    className="ad-btn-secondary"
+                    onClick={closeModal}
+                  >
+                    Cancel
+                  </button>
+
+                  <button
+                    className="ad-btn-primary"
+                    onClick={handleSave}
+                    disabled={saving}
+                  >
+                    {saving
+                      ? "Saving..."
+                      : "Save"}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <h2>Delete FAQ?</h2>
+
+                <p>
+                  This action cannot be undone.
+                </p>
+
+                <div className="ad-modal-footer">
+                  <button
+                    className="ad-btn-secondary"
+                    onClick={closeModal}
+                  >
+                    Cancel
+                  </button>
+
+                  <button
+                    className="ad-btn-danger"
+                    onClick={handleDelete}
+                    disabled={
+                      !!deletingId
+                    }
+                  >
+                    {deletingId
+                      ? "Deleting..."
+                      : "Delete"}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {toast && (
+        <div
+          className={`ad-toast ${toast.type}`}
+        >
+          {toast.msg}
+        </div>
+      )}
     </>
   );
 }
